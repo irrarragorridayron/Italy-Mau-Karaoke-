@@ -195,7 +195,6 @@
   const DB_VERSION = 1;
   const STORE = "app";
   const LAST_KEY = "lastProject";
-  const META_KEY = "italyMauKaraoke:lastProjectMeta";
   let db;
   let project = freshProject();
   let currentSongId = null;
@@ -291,14 +290,15 @@
     project.name=$("projectName").value.trim() || "Mi proyecto de karaoke";
     project.currentSongId=currentSongId;
     project.updatedAt=new Date().toISOString();
-    const clean={...project,songs:project.songs.map(({audioBlob,coverBlob,...x})=>x)};
-    localStorage.setItem(META_KEY,JSON.stringify(clean));
-    localStorage.setItem(LAST_KEY,project.id);
-    await dbPut("project:"+project.id,clean);
-    for(const x of project.songs){
-      if(x.audioBlob) await dbPut("audio:"+x.id,x.audioBlob);
-      if(x.coverBlob) await dbPut("cover:"+x.id,x.coverBlob);
+
+    // Media blobs are stored separately so the project record stays fast.
+    const clean={...project, songs:project.songs.map(({audioBlob,coverBlob,...s})=>s)};
+    await dbPut("project:"+project.id, clean);
+    for(const s of project.songs){
+      if(s.audioBlob) await dbPut("audio:"+s.id,s.audioBlob);
+      if(s.coverBlob) await dbPut("cover:"+s.id,s.coverBlob);
     }
+    await dbPut(LAST_KEY, project.id);
     if(show) toast("Proyecto guardado en este dispositivo");
   }
 
@@ -318,13 +318,13 @@
   }
 
   async function restoreLast(){
-    let p=null;
-    try{ const raw=localStorage.getItem(META_KEY); if(raw) p=JSON.parse(raw); }catch(e){}
-    if(!p){ const id=await dbGet(LAST_KEY); if(id) p=await dbGet("project:"+id); }
-    if(!p){ toast("No hay ningún proyecto guardado todavía"); return; }
-    p=await hydrateProject(p);
-    project=p; currentSongId=p.currentSongId||p.songs[0]?.id||null;
-    renderAll(); toast("Último proyecto recuperado");
+    const id=await dbGet(LAST_KEY);
+    if(!id){ toast("No hay ningún proyecto guardado todavía"); return; }
+    const p=await hydrateProject(await dbGet("project:"+id));
+    if(!p){ toast("No se encontró el último proyecto"); return; }
+    project=p; currentSongId=p.currentSongId || p.songs[0]?.id || null;
+    renderAll();
+    toast("Último proyecto recuperado");
   }
 
   async function addAudio(file){
@@ -526,20 +526,16 @@
     if(f)addAudio(f);else toast("Suelta un archivo de audio");
   });
 
-  window.addEventListener("pagehide",()=>{
-    try{
-      localStorage.setItem(META_KEY,JSON.stringify({...project,songs:project.songs.map(({audioBlob,coverBlob,...x})=>x)}));
-      localStorage.setItem(LAST_KEY,project.id);
-    }catch(e){}
-  });
+  window.addEventListener("beforeunload",()=>{ if(db) saveProject(false).catch(()=>{}); });
 
   async function boot(){
     try{
       await openDB();
-      let p=null;
-      try{ const raw=localStorage.getItem(META_KEY); if(raw) p=JSON.parse(raw); }catch(e){}
-      if(!p){ const id=await dbGet(LAST_KEY); if(id) p=await dbGet("project:"+id); }
-      if(p){ p=await hydrateProject(p); project=p; currentSongId=p.currentSongId||p.songs[0]?.id||null; }
+      const id=await dbGet(LAST_KEY);
+      if(id){
+        const p=await hydrateProject(await dbGet("project:"+id));
+        if(p){project=p;currentSongId=p.currentSongId||p.songs[0]?.id||null}
+      }
       renderAll();
       $("onlineStatus").textContent=navigator.onLine?"Online + guardado local":"Modo offline";
     }catch(e){console.error(e);toast("El almacenamiento local no está disponible")}
