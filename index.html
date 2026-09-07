@@ -56,6 +56,11 @@
     .track-meta{font-size:12px;color:var(--muted);margin-top:3px}
     audio{width:100%;margin-top:13px}
     .time{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:4px}
+    .speed-control{display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap;margin-top:10px;padding:8px 10px;border:1px solid #2d2926;border-radius:12px;background:#09090c;color:var(--muted);font-size:12px}
+    .speed-btn{border:1px solid #3b3022;background:#15130f;color:#d9c89d;border-radius:9px;padding:7px 11px;font-size:12px;font-weight:800}
+    .speed-btn.active{background:linear-gradient(180deg,#80632d,#4e3b1c);border-color:#b18a42;color:#fff;box-shadow:0 0 10px rgba(232,184,74,.18)}
+    .speed-btn:active{transform:scale(.96)}
+    @media(max-width:500px){.speed-control{gap:5px}.speed-btn{padding:7px 9px}}
     .lyrics-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}
     .lyrics-list{display:grid;gap:7px;max-height:450px;overflow:auto;padding-right:3px}
     .cue{display:grid;grid-template-columns:70px 1fr 38px;gap:7px;align-items:center}
@@ -126,6 +131,13 @@
             </div>
           </div>
           <audio id="audio" controls preload="metadata"></audio>
+          <div class="speed-control" aria-label="Velocidad de reproducción">
+            <span>🐢 Velocidad</span>
+            <button type="button" class="speed-btn" data-speed="0.25">25%</button>
+            <button type="button" class="speed-btn" data-speed="0.5">50%</button>
+            <button type="button" class="speed-btn" data-speed="0.75">75%</button>
+            <button type="button" class="speed-btn active" data-speed="1">100%</button>
+          </div>
           <div class="time"><span id="currentTime">00:00.000</span><span id="duration">00:00.000</span></div>
         </div>
         <div class="row" style="margin-top:13px">
@@ -214,6 +226,19 @@
 
   const $ = id => document.getElementById(id);
   const audio = $("audio");
+  const SPEEDS=[0.25,0.5,0.75,1];
+  function setPlaybackSpeed(rate){
+    const value=SPEEDS.includes(Number(rate))?Number(rate):1;
+    audio.playbackRate=value;
+    document.querySelectorAll(".speed-btn").forEach(btn=>{
+      btn.classList.toggle("active",Number(btn.dataset.speed)===value);
+    });
+  }
+  document.querySelectorAll(".speed-btn").forEach(btn=>{
+    btn.addEventListener("click",()=>setPlaybackSpeed(btn.dataset.speed));
+  });
+  setPlaybackSpeed(1);
+
 
   function freshProject(){
     return {
