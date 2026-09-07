@@ -453,7 +453,7 @@
     const lines=normalizeLyricsText($("fullLyricsInput").value);
     if(!lines.length){toast("Pega primero la letra completa");return;}
     if((s.lyrics||[]).length && !confirm("Ya hay líneas de letra. ¿Quieres reemplazarlas?")) return;
-    s.lyrics=lines.map(text=>({time:0,text}));
+    s.lyrics=lines.map(text=>({time:null,text,marked:false}));
     renderLyrics();
     scheduleSave();
     toast(lines.length+" líneas creadas");
@@ -472,14 +472,15 @@
     const el=$("lyricsList"); el.innerHTML="";
     const s=currentSong();
     if(!s){el.innerHTML='<div class="empty">Carga una canción para editar su letra.</div>';return}
-    s.lyrics=(s.lyrics||[]).sort((a,b)=>a.time-b.time);
+    s.lyrics=(s.lyrics||[]).map(c=>({time:c.time==null?null:Number(c.time),text:c.text||'',marked:c.marked===true || (c.time!=null && Number(c.time)>0)})).sort((a,b)=>(a.time==null?Infinity:a.time)-(b.time==null?Infinity:b.time));
     if(!s.lyrics.length){el.innerHTML='<div class="empty">Todavía no hay líneas. Pulsa “+ Añadir línea”.</div>';return}
     s.lyrics.forEach((cue,i)=>{
       const row=document.createElement("div");row.className="cue";
-      const t=document.createElement("input");t.type="number";t.step="0.001";t.min="0";t.value=(cue.time||0).toFixed(3);
+      const t=document.createElement("input");t.type="number";t.step="0.001";t.min="0";t.value=cue.marked && cue.time!=null ? Number(cue.time).toFixed(3) : '';
+      t.placeholder='--:--.---';
       const tx=document.createElement("input");tx.className="cue-text";tx.value=cue.text||"";tx.placeholder="Escribe la línea…";
       const del=document.createElement("button");del.className="btn icon-btn small danger";del.textContent="×";
-      t.oninput=()=>{cue.time=Number(t.value)||0;s.lyrics.sort((a,b)=>a.time-b.time);scheduleSave()};
+      t.oninput=()=>{const v=t.value.trim();cue.time=v===''?null:(Number(v)||0);cue.marked=v!=='';s.lyrics.sort((a,b)=>(a.time==null?Infinity:a.time)-(b.time==null?Infinity:b.time));scheduleSave()};
       tx.oninput=()=>{cue.text=tx.value;scheduleSave()};
       del.onclick=()=>{s.lyrics.splice(i,1);renderLyrics();scheduleSave()};
       row.append(t,tx,del);el.appendChild(row);
@@ -515,12 +516,17 @@
   };
   $("stampBtn").onclick=()=>{
     const s=currentSong();if(!s)return toast("Primero carga una canción");
-    const blank=(s.lyrics||[]).find(c=>!c.text);
-    if(blank){blank.time=audio.currentTime||0;renderLyrics();scheduleSave();toast("Tiempo marcado");return}
-    s.lyrics.push({time:audio.currentTime||0,text:""});
-    s.lyrics.sort((a,b)=>a.time-b.time);renderLyrics();scheduleSave();
-    const inputs=$("lyricsList").querySelectorAll(".cue-text"); inputs[inputs.length-1]?.focus();
-    toast("Tiempo marcado; escribe la línea");
+    const cues=s.lyrics||[];
+    if(!cues.length){toast("Primero convierte la letra en líneas");return}
+    const target=cues.find(c=>c.marked!==true);
+    if(!target){toast("Todas las líneas ya tienen tiempo marcado");return}
+    target.time=audio.currentTime||0;
+    target.marked=true;
+    renderLyrics();scheduleSave();
+    const rows=$("lyricsList").querySelectorAll(".cue");
+    const index=cues.indexOf(target);
+    rows[index]?.scrollIntoView({behavior:"smooth",block:"center"});
+    toast("Tiempo marcado en la línea "+(index+1));
   };
 
   $("deleteSongBtn").onclick=async()=>{
