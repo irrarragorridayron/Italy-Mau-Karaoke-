@@ -148,6 +148,16 @@
           </div>
         </div>
         <div class="hint" style="margin-bottom:11px">Escribe una línea y usa <span class="kbd">Marcar tiempo</span> mientras suena la canción para fijar su posición. Los tiempos se guardan offline.</div>
+        <div id="fullLyricsBox" style="margin-bottom:14px;padding:13px;border:1px solid #302821;border-radius:14px;background:#09090b">
+          <div style="font-weight:800;margin-bottom:7px">Pegar letra completa</div>
+          <div class="hint" style="margin-bottom:8px">Pega aquí toda la letra. La aplicación separará automáticamente cada línea para que después puedas sincronizarla con la canción.</div>
+          <textarea id="fullLyricsInput" style="min-height:150px" placeholder="Pega aquí la letra completa..."></textarea>
+          <div class="row" style="margin-top:9px">
+            <button class="btn rose small" id="convertLyricsBtn">Convertir en líneas</button>
+            <button class="btn small" id="loadLyricsBtn">Cargar letra sincronizada</button>
+          </div>
+        </div>
+
         <div id="lyricsList" class="lyrics-list"></div>
       </section>
     </main>
@@ -406,6 +416,33 @@
     } else $("cover").src="./assets/logo.png";
   }
 
+
+  function normalizeLyricsText(text){
+    return text.replace(/\r\n/g,"\n").replace(/\r/g,"\n")
+      .split("\n").map(line=>line.trim()).filter(Boolean);
+  }
+
+  function convertFullLyrics(){
+    const s=currentSong();
+    if(!s){toast("Primero carga una canción");return;}
+    const lines=normalizeLyricsText($("fullLyricsInput").value);
+    if(!lines.length){toast("Pega primero la letra completa");return;}
+    if((s.lyrics||[]).length && !confirm("Ya hay líneas de letra. ¿Quieres reemplazarlas?")) return;
+    s.lyrics=lines.map(text=>({time:0,text}));
+    renderLyrics();
+    scheduleSave();
+    toast(lines.length+" líneas creadas");
+  }
+
+  function loadLyricsToBox(){
+    const s=currentSong();
+    if(!s){toast("Primero carga una canción");return;}
+    const lines=(s.lyrics||[]).map(c=>c.text||"").filter(Boolean);
+    if(!lines.length){toast("No hay letra guardada");return;}
+    $("fullLyricsInput").value=lines.join("\n");
+    toast("Letra cargada");
+  }
+
   function renderLyrics(){
     const el=$("lyricsList"); el.innerHTML="";
     const s=currentSong();
@@ -423,6 +460,9 @@
       row.append(t,tx,del);el.appendChild(row);
     });
   }
+
+  $("convertLyricsBtn").onclick=convertFullLyrics;
+  $("loadLyricsBtn").onclick=loadLyricsToBox;
 
   $("audioBtn").onclick=()=>$("audioFile").click();
   $("addAnotherBtn").onclick=()=>$("audioFile").click();
