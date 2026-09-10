@@ -160,6 +160,18 @@
           </div>
         </div>
         <div class="hint" style="margin-bottom:11px">Escribe una línea y usa <span class="kbd">Marcar tiempo</span> mientras suena la canción para fijar su posición. Los tiempos se guardan offline.</div>
+        <div id="aiSyncBox" style="margin-bottom:14px;padding:13px;border:1px solid #24384d;border-radius:14px;background:linear-gradient(180deg,#081018,#09090b)">
+          <div style="font-weight:900;margin-bottom:7px">🤖 Sincronización automática con la voz</div>
+          <div class="hint" style="margin-bottom:9px">La IA escucha el audio, reconoce lo que se canta y usa los tiempos detectados en el propio audio para alinear tu letra. No reparte los tiempos por duración.</div>
+          <div class="row">
+            <button class="btn primary small" id="autoSyncBtn">🎤 Sincronizar con IA</button>
+            <button class="btn small" id="autoSyncCancelBtn" style="display:none">Cancelar</button>
+          </div>
+          <div id="aiSyncStatus" class="hint" style="margin-top:8px;min-height:18px"></div>
+          <div id="aiSyncProgress" style="display:none;margin-top:8px;height:7px;border-radius:99px;background:#151922;overflow:hidden"><div id="aiSyncBar" style="height:100%;width:0%;background:linear-gradient(90deg,#168cff,#62c5ff);transition:width .2s"></div></div>
+          <div class="hint" style="margin-top:8px;font-size:11px">La primera vez necesita Internet para descargar el motor/modelo Whisper. Después el navegador puede reutilizar la copia almacenada. En canciones con voz muy procesada, coros o mucho ruido, revisa las líneas y corrige con “Marcar tiempo”.</div>
+        </div>
+
         <div id="fullLyricsBox" style="margin-bottom:14px;padding:13px;border:1px solid #302821;border-radius:14px;background:#09090b">
           <div style="font-weight:800;margin-bottom:7px">Pegar letra completa</div>
           <div class="hint" style="margin-bottom:8px">Pega aquí toda la letra. La aplicación separará automáticamente cada línea para que después puedas sincronizarla con la canción.</div>
@@ -486,6 +498,175 @@
       row.append(t,tx,del);el.appendChild(row);
     });
   }
+
+  // --- Sincronización automática basada en reconocimiento de voz (Whisper) ---
+  let whisperPromise=null;
+  let whisperAbort=false;
+
+  function normalizeAiWord(v){
+    return String(v||"").toLowerCase()
+      .normalize("NFD").replace(/[\\u0300-\\u036f]/g,"")
+      .replace(/[^a-z0-9ñü'’]+/gi," ").trim();
+  }
+
+  function aiTokens(text){
+    return normalizeAiWord(text).split(/\s+/).filter(Boolean);
+  }
+
+  function wordSimilarity(a,b){
+    a=normalizeAiWord(a); b=normalizeAiWord(b);
+    if(!a||!b) return 0;
+    if(a===b) return 1;
+    if(a.length<3||b.length<3) return 0;
+    const m=a.length,n=b.length;
+    const prev=new Array(n+1); const cur=new Array(n+1);
+    for(let j=0;j<=n;j++)prev[j]=j;
+    for(let i=1;i<=m;i++){
+      cur[0]=i;
+      for(let j=1;j<=n;j++){
+        const cost=a[i-1]===b[j-1]?0:1;
+        cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+cost);
+      }
+      for(let j=0;j<=n;j++)prev[j]=cur[j];
+    }
+    return 1-prev[n]/Math.max(m,n);
+  }
+
+  async function getWhisper(){
+    if(whisperPromise) return whisperPromise;
+    whisperPromise=(async()=>{
+      setAiStatus("Cargando motor de reconocimiento… la primera vez puede tardar.");
+      const mod=await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/+esm");
+      const {pipeline,env}=mod;
+      env.allowLocalModels=false;
+      env.useBrowserCache=true;
+      return await pipeline("automatic-speech-recognition","Xenova/whisper-tiny",{
+        dtype:"q8",
+        device:"wasm"
+      });
+    })().catch(err=>{whisperPromise=null;throw err});
+    return whisperPromise;
+  }
+
+  async function audioTo16k(blob){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) throw new Error("Este navegador no permite analizar el audio localmente.");
+    const ctx=new AC();
+    const buf=await ctx.decodeAudioData(await blob.arrayBuffer());
+    const targetRate=16000;
+    const length=Math.ceil(buf.duration*targetRate);
+    const off=new OfflineAudioContext(1,length,targetRate);
+    const src=off.createBufferSource();
+    src.buffer=buf;
+    src.connect(off.destination);src.start(0);
+    const rendered=await off.startRendering();
+    const data=rendered.getChannelData(0).slice();
+    await ctx.close().catch(()=>{});
+    return data;
+  }
+
+  function setAiStatus(msg){$("aiSyncStatus").textContent=msg||"";}
+  function setAiProgress(v){
+    const box=$("aiSyncProgress"),bar=$("aiSyncBar");
+    box.style.display="block";bar.style.width=Math.max(0,Math.min(100,v))+"%";
+  }
+
+  function alignLyricsToRecognized(lyrics,recognized){
+    const all=[]; recognized.forEach((w,i)=>{if(w.text&&Array.isArray(w.timestamp)){all.push({text:w.text,start:Number(w.timestamp[0]),end:Number(w.timestamp[1]),i})}});
+    if(!all.length) throw new Error("La IA no encontró palabras con tiempos en el audio.");
+    let cursor=0,matched=0;
+    const result=lyrics.map(c=>({...c,time:null,marked:false,aiMatched:false,aiConfidence:0}));
+    for(let li=0;li<lyrics.length;li++){
+      const lt=aiTokens(lyrics[li].text);
+      if(!lt.length) continue;
+      let best=null;
+      const maxStart=Math.min(all.length-1,cursor+120);
+      for(let start=cursor;start<=maxStart;start++){
+        let score=0,used=0,ti=start;
+        for(let k=0;k<lt.length && ti<all.length;k++){
+          let localBest=0,localIdx=-1;
+          for(let q=ti;q<Math.min(all.length,ti+4);q++){
+            const sim=wordSimilarity(lt[k],all[q].text);
+            if(sim>localBest){localBest=sim;localIdx=q;}
+          }
+          if(localIdx>=0 && localBest>=0.68){score+=localBest;used++;ti=localIdx+1;}
+          else if(k<lt.length-1){
+            // allow a short recognition omission
+            continue;
+          }
+        }
+        const coverage=used/lt.length;
+        const quality=coverage*0.72+(used?score/used:0)*0.28;
+        if(!best || quality>best.quality)best={start,quality,end:ti,used};
+      }
+      if(best && best.used>=Math.max(1,Math.ceil(lt.length*0.45)) && best.quality>=0.62){
+        result[li].time=all[best.start].start;
+        result[li].marked=true;
+        result[li].aiMatched=true;
+        result[li].aiConfidence=Math.round(best.quality*100);
+        cursor=Math.max(cursor+1,best.end);
+        matched++;
+      }
+      setAiProgress(55+(li+1)/lyrics.length*35);
+    }
+    // If a short line was missed, inherit the nearest detected vocal timestamp only as a flagged fallback.
+    // These are clearly marked as low-confidence so the user can correct them manually.
+    for(let i=0;i<result.length;i++){
+      if(result[i].time!=null)continue;
+      let next=i+1;while(next<result.length&&result[next].time==null)next++;
+      let prev=i-1;while(prev>=0&&result[prev].time==null)prev--;
+      if(prev>=0&&next<result.length){
+        result[i].time=result[prev].time+(result[next].time-result[prev].time)*(i-prev)/(next-prev);
+        result[i].marked=true;result[i].aiMatched=false;result[i].aiConfidence=0;
+      }
+    }
+    return {lyrics:result,matched,total:lyrics.length};
+  }
+
+  async function autoSyncLyrics(){
+    const s=currentSong();
+    if(!s)return toast("Primero carga una canción");
+    if(!(s.audioBlob instanceof Blob))return toast("Primero carga el audio de la canción");
+    if(!(s.lyrics||[]).length)return toast("Primero pega y convierte la letra en líneas");
+    if(!confirm("La IA analizará el audio y reemplazará los tiempos actuales de las líneas. ¿Continuar?"))return;
+    whisperAbort=false;
+    $("autoSyncBtn").disabled=true;$("autoSyncCancelBtn").style.display="inline-flex";
+    setAiProgress(3);
+    try{
+      const pipe=await getWhisper();
+      if(whisperAbort)throw new Error("cancelled");
+      setAiStatus("Preparando el audio…");setAiProgress(12);
+      const wave=await audioTo16k(s.audioBlob);
+      if(whisperAbort)throw new Error("cancelled");
+      setAiStatus("Escuchando la voz y obteniendo palabras con tiempo…");setAiProgress(20);
+      const out=await pipe(wave,{
+        return_timestamps:"word",
+        chunk_length_s:30,
+        stride_length_s:5,
+        language:"spanish",
+        task:"transcribe"
+      });
+      if(whisperAbort)throw new Error("cancelled");
+      const chunks=(out&&out.chunks)||[];
+      setAiStatus("Alineando la letra que pegaste con las palabras detectadas…");setAiProgress(55);
+      const aligned=alignLyricsToRecognized(s.lyrics,chunks);
+      s.lyrics=aligned.lyrics;
+      renderLyrics();scheduleSave();setAiProgress(100);
+      const weak=s.lyrics.filter(x=>x.time!=null&&!x.aiMatched).length;
+      setAiStatus(`Listo: ${aligned.matched}/${aligned.total} líneas encontradas directamente en la voz.`+(weak?` ${weak} necesitan revisión manual.`:""));
+      toast("Sincronización automática terminada");
+    }catch(err){
+      console.error(err);
+      if(err&&err.message==="cancelled"){setAiStatus("Sincronización cancelada.");toast("Cancelado");}
+      else {setAiStatus("No se pudo completar la sincronización: "+(err?.message||"error desconocido"));toast("La sincronización IA no pudo terminar");}
+    }finally{
+      $("autoSyncBtn").disabled=false;$("autoSyncCancelBtn").style.display="none";
+      setTimeout(()=>{$("aiSyncProgress").style.display="none"},1200);
+    }
+  }
+
+  $("autoSyncBtn").onclick=autoSyncLyrics;
+  $("autoSyncCancelBtn").onclick=()=>{whisperAbort=true;setAiStatus("Cancelando…");};
 
   $("convertLyricsBtn").onclick=convertFullLyrics;
   $("loadLyricsBtn").onclick=loadLyricsToBox;

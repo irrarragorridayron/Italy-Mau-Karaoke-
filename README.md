@@ -1,48 +1,18 @@
-# Italy Mau Karaoke Editor
+# Italy Mau Karaoke Editor — sincronización IA
 
-## Estructura
+Esta versión añade sincronización automática basada en reconocimiento de voz con Whisper ejecutado en el navegador mediante Transformers.js.
 
-```text
-Italy Mau Karaoke Editor/
-├── index.html
-├── manifest.webmanifest
-├── service-worker.js
-├── icons/
-│   ├── icon-192.png
-│   └── icon-512.png
-└── assets/
-    └── logo.png
-```
+## Uso
+1. Carga la canción.
+2. Pega la letra completa.
+3. Pulsa **Convertir en líneas**.
+4. Pulsa **🎤 Sincronizar con IA**.
+5. La IA analiza el audio, obtiene palabras con marcas de tiempo y alinea esas marcas con las líneas de la letra.
+6. Revisa las líneas de baja confianza y corrígelas con **Marcar tiempo**.
 
-## Qué incluye
-
-- PWA instalable desde GitHub Pages.
-- App shell cacheado por Service Worker.
-- Funcionamiento del editor sin Internet después de la primera carga.
-- IndexedDB para guardar proyectos en el teléfono/navegador.
-- Recuperación automática del último proyecto.
-- Guardado automático mientras se editan los datos.
-- Importación de audio local.
-- Audio y portadas almacenados localmente.
-- Biblioteca de canciones.
-- Editor de letra por líneas con tiempo en segundos.
-- Botón para marcar el tiempo mientras reproduce el audio.
-- Exportación/importación de proyecto en JSON, incluyendo audio y portada.
-
-## Publicar en GitHub Pages
-
-1. Sube `index.html`, `manifest.webmanifest`, `service-worker.js`, `icons/` y `assets/` respetando las carpetas.
-2. Activa GitHub Pages para la rama/carpeta donde estén esos archivos.
-3. Abre la URL de GitHub Pages una primera vez con Internet.
-4. Espera a que cargue completamente y vuelve a abrir la app.
-5. Desde el navegador puedes instalarla como aplicación si el navegador ofrece "Instalar app".
-
-## Importante sobre offline
-
-El navegador debe haber visitado la app al menos una vez para descargar el App Shell y registrar el Service Worker. Los archivos de música que importes después se guardan en el almacenamiento local del dispositivo mediante IndexedDB.
-
-Los proyectos son locales a ese navegador/dispositivo. Para moverlos a otro dispositivo usa "Exportar proyecto" y luego "Importar proyecto".
-
-## Límites
-
-El almacenamiento disponible para audio/proyectos depende del navegador y del espacio libre del dispositivo. No conviene borrar los datos del sitio si quieres conservar los proyectos locales.
+## Importante
+- La primera ejecución del motor IA necesita Internet para descargar la biblioteca y el modelo Whisper.
+- El navegador usa su caché para reutilizar el modelo posteriormente; esto permite intentar trabajar sin Internet después de haberlo descargado, aunque la disponibilidad offline del caché depende del navegador.
+- El audio se procesa en el dispositivo; no se envía a un servidor de transcripción.
+- Whisper no garantiza una sincronización perfecta en todas las canciones, especialmente con voz muy procesada, coros, efectos o música muy dominante.
+- La sincronización manual sigue disponible como corrección.
